@@ -1,0 +1,12 @@
+AccountExpirationDate
+accountExpires
+AllowReversiblePasswordEncryption
+Created
+createTimeStamp
+Enabled
+lastLogon
+LastLogonDate
+LockedOut
+logonCount
+Modified
+modifyTimeStamp
