@@ -3,7 +3,7 @@
     [string]$outputDir,
     [string]$badIPList
 )
-
+$ErrorActionPreference = "Stop"
 <#
 
 .Synopsis 
@@ -14,6 +14,7 @@
 
   .Parameter Searchdir
   Secifies the directory containing stored json files.  The Invictus suite will create multiple json files. 
+  ** NB Currently, you need to include the trailing slash at the end of the dir.  I'll fix this...
 
   .Parameter Outputpath
   Specifies path for exported event data. Output will be a file named MaliciousActivities.csv in the specified
@@ -195,7 +196,14 @@ $loginevents = @("UserLoggedIn", "UserLoginFailed")
 $fileEvents = @("FileAccessed","FileAccessedExtended","FileCheckedIn","FileCheckedOut","FileCopied","FileDownloaded","FileModified","FileModifiedExtended","FileMoved","FilePreviewed","FileRecycled","FileRenamed","FileSyncDownloadedFull","FileSyncUploadedFull","FileUploaded")
 
 Foreach($evt in $Logevents){
-    if($evt.ClientIP -in $badip){
+  #the following two try-catch blocks are last minute code edits because Microsoft
+  #sometimes puts IP:port in these fields, and sometimes they put IP, and sometimes they 
+  #put in the IPV6 address, and other times they put in [IPV6 in square brackets] 
+#   try{ $evt.ClientIP = $evt.ClientIP -replace ":\d{4,6}$",""  }
+#   catch{}#do nothing, if the replace action didn't find anything
+#   try{$evt.ActorIpAddress = $evt.ActorIpAddress -replace ":\d{4,6}$",""  }
+#   catch{}#do nothing if the replace action didn't find anything
+    if($evt.ClientIP -in $badip -or $evt.ActorIPAddress -in $badip){
         # Write-Host "Debug: ClientIP: $($evt.ClientIP)"
         $applicationName = Get-ApplicationName -applicationID $evt.ApplicationId
             if($evt.Operation -in $loginevents ){
