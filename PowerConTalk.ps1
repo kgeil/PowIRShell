@@ -161,7 +161,18 @@ $ipstotest | out-file C:\Scripts\PowIRShell\test-IPs.txt -Encoding utf8
 # Take a look at all of the operations
 $auditevents.Operation | Sort-Object -Unique
 
-C:\Scripts\PowIRShell\Get-IPInfoLookup.ps1 -IPListPath C:\Scripts\PowIRShell\test-IPs-short.txt -ipinfoAPIKey "d8c0218a192f4c" -outputdir C:\scripts\PowIRShell\ScriptOutput\
 
-# This will give you a potential bad IP list just based on geography and ASN
+# navigate to the PowIRShell directory
+cd C:\Scripts\PowIRShell
 
+# This will give you a potential bad IP list just based on geography and ASN 
+.\Get-IPInfoLookup.ps1 -IPListPath .\test-IPs.txt -ipinfoAPIKey "<API KEY HERE>" -outputdir .\ScriptOutput\
+
+#manually look through the results from Get-IPInfoLookup and determine your suspect IP addresses and create badip.txt in the PowIRShell directory
+
+#run ipqualityscore script against your suspect IP addresses to get a second opinion.  If you want to pay for IPQS, go for this first,
+# but it's expensive for me, so I try to edit my suspect IP list using other scripts before IPQS, which limits free users to 50 lookups per day.
+.\Get-IPQSLookup.ps1 -IPListPath .\badip.txt -ipQSAPIKey "<API KEY HERE>" -outputdir .\ScriptOutput
+
+# run the Get-M365CompromiseInfo.ps1 script
+.\Get-M365CompromiseInfo.ps1 -searchdir .\Test_data\M365Output\UnifiedAuditLog\20231012092146\ -outputDir .\ScriptOutput -badIPList .\badip.txt
