@@ -162,3 +162,6 @@ $ipstotest | out-file C:\Scripts\PowIRShell\test-IPs.txt -Encoding utf8
 $auditevents.Operation | Sort-Object -Unique
 
 C:\Scripts\PowIRShell\Get-IPInfoLookup.ps1 -IPListPath C:\Scripts\PowIRShell\test-IPs-short.txt -ipinfoAPIKey "d8c0218a192f4c" -outputdir C:\scripts\PowIRShell\ScriptOutput\
+
+# This will give you a potential bad IP list just based on geography and ASN
+
