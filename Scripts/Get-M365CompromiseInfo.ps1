@@ -8,11 +8,14 @@
   export pertinent forensic information.  
   **NB: Unless you use the badiplist parameter, an API key for at least one of 
   these services is required: IP QualityScore, IPInfo.io, or Scamalytics.com.
+  **NB: The malicious activity detected by this script is entirely dependent on
+  either a list of known-bad IP addresses, or the results of the IP threat intel.
  
   The easiest way to run this script is to retrieve JSON Output from the Invictus 
   Extractor found here: https://github.com/invictus-ir/Microsoft-Extractor-Suite.
   The script will work with M365 logs in JSON format regardless of how they are 
-  extracted. 
+  extracted. If, for example, you have CSV output, you can use the AuditData field,
+  which is json.
   
 
 .Description
@@ -91,6 +94,12 @@
 
 .Parameter badIPList
   Carriage-return separated list of IP addresses deemed to be bad.
+
+.PARAMETER fraudScoreThreshold
+    Specifies the fraud score threshold for IPQS.  Default is 75.  
+    This is the threshold for considering an IP address to be malicious.
+    It's worth reading the IPQS documentation: 
+    https://www.ipqualityscore.com/documentation/fraud-prevention-scoring
   
   .Example
   C:\Scripts\PowIRShell\Get-M365CompromiseInfo.ps1 -searchdir C:\Scripts\PowIRShell\Test_data\M365Output\UnifiedAuditLog\20231012092146\ -outputDir C:\Temp\365Results -ipinfoLookup -ipinfoAPIKey <ipinfoAPIKey> -IPQSLookup -ipqsAPIKey "<IPQSAPIKey>" -ScamalyticsLookup -scamalyticsAPIKey "<ScamalyticsAPIKey>" -Verbose
@@ -100,7 +109,8 @@
    this: https://github.com/invictus-ir/Microsoft-Extractor-Suite
 
 .Outputs
-  CSV files containing evnts of interest from the forensic perspective: MaliciousActivities.csv, MaliciousLogons.csv, 
+  CSV files containing evnts of interest from the forensic perspective: 
+  MaliciousActivities.csv, MaliciousLogons.csv,MaliciousMailItemsAccessed.csv, 
   and MaliciousFileOps.csv.
 
 #>
@@ -168,7 +178,7 @@ if (Get-Module -Name "M365CompromiseInfo") {
 $Logevents = Get-AuditdataFrom365JSON -searchdir $searchdir
 Write-Host There are: $Logevents.count Events -ForegroundColor Green
 $tenPercent = "{0:N0}" -f ($Logevents.count/10)
-Write-Host "Debug: tenPercent: $tenPercent"
+Write-Host "TenPercent: $tenPercent Progress bar will update every $tenPercent events" -ForegroundColor Green
 $increment = $tenPercent
 $counter = 1
 
@@ -183,6 +193,47 @@ $iplist =  Get-UniqueIPs -auditevents $Logevents # this is not necessary if a ba
 $iplist | out-file $outputdir\iplist.txt -Encoding ascii -Force
 $suspectip = @()
 
+
+    function Get-MailItemsAccessedInfo {
+      <#
+    .SYNOPSIS
+        Retrieves "Folder" and "OperationProperties" information for the UAL MailItemsAccessed
+        events.
+    .INPUTS
+        The "Folders" attribute of the UAL MailItemsAccessed events.
+        for example:, $event.Folders (assuming MailItemsAccessed event)
+    .OUTPUTS
+        A PSObject with the following properties:
+            - Id
+            - Path
+            - InternetMessageId
+    #>
+        param (
+            [Parameter(Mandatory=$true)]
+            [object]$MailItemsAccessedEvent
+        )
+    
+        $result = @()
+    
+        $operationProperties = @{}
+        foreach ($property in $MailItemsAccessedEvent.OperationProperties) {
+            $operationProperties[$property.Name] = $property.Value
+        }
+    
+        foreach ($folder in $MailItemsAccessedEvent.Folders) {
+            foreach ($item in $folder.FolderItems) {
+                $result += New-Object PSObject -Property @{
+                    InternetMessageId = $item.InternetMessageId
+                    Id = $folder.Id
+                    Path = $folder.Path
+                    MailAccessType = $operationProperties['MailAccessType']
+                    IsThrottled = $operationProperties['IsThrottled']
+                }
+            }
+        }
+    
+        return $result
+    }
 function Get-M365CompromiseResults {
     param (
         [array]$Logevents
@@ -193,13 +244,14 @@ function Get-M365CompromiseResults {
     $fileEvents = @("FileAccessed","FileAccessedExtended","FileCheckedIn","FileCheckedOut","FileCopied","FileDownloaded","FileModified","FileModifiedExtended","FileMoved","FilePreviewed","FileRecycled","FileRenamed","FileSyncDownloadedFull","FileSyncUploadedFull","FileUploaded")
     $maliciousFileops=@()
     $maliciousLogins=@()
+    $maliciousMailItemsAccessed=@()
     [array]$maliciousActivities=@()
     Write-Host "Starting to check logs for malicious activity..." -ForegroundColor Green
 
 
     Foreach($evt in $Logevents){
         if((Get-IPAddress -ipField $evt.ClientIPAddress) -in $badip -or (Get-IPAddress -ipField $evt.ActorIPAddress) -in $badip){
-            Write-Host "Debug: IP IN BADIP: $($evt.ClientIPAddress)" -ForegroundColor Yellow
+            #Write-Host "Debug: IP IN BADIP: $($evt.ClientIPAddress)" -ForegroundColor Yellow
             $applicationName = Get-M365ApplicationNameFromAppID  -applicationID $evt.ApplicationId
             if($evt.Operation -in $loginevents ){
                 foreach($extendedProperty in $evt.ExtendedProperties){
@@ -252,9 +304,34 @@ function Get-M365CompromiseResults {
                     'UserAgent' = $userAgent
                 }
                 $maliciousFileops += $arrayitems
-                Write-Host "Added object to maliciousFileops array: $arrayitems"
+                Write-Verbose "Added object to maliciousFileops array: $arrayitems"
             } #end elseif $evt.operation in $fileEvents
             #region
+            elseif($evt.Operation -eq "MailItemsAccessed" ){
+                $mailitemsaccessedInfo = Get-MailItemsAccessedInfo -MailItemsAccessedEvent $evt
+                if ($evt.ClientInfoString) {
+                    $ClientInfoString = $evt.ClientInfoString.replace(',','-')
+                }
+                foreach($item in $mailitemsaccessedInfo){
+                    $arrayitems = [PSCustomObject]@{
+                        'CreationTime' = $evt.CreationTime
+                        'UserId' = $evt.UserId
+                        'ClientIPAddress' = $evt.ClientIPAddress
+                        'Operation' = $evt.Operation
+                        'ApplicationId' = $evt.AppID
+                        'ApplicationName' = $applicationName
+                        'ClientInfoString' = $ClientInfoString
+                        'MailAccessType' = $item.MailAccessType
+                        'IsThrottled' = $item.IsThrottled
+                        'InternetMessageId' = $item.InternetMessageId
+                        'Id' = $item.Id
+                        'Path' = $item.Path
+                    }
+                    $maliciousMailItemsAccessed += $arrayitems
+                } #end foreach $item in $mailitemsaccessedInfo
+            }
+
+
             else{
                 $arrayitems = [PSCustomObject]@{
                     'CreationTime' = $evt.CreationTime
@@ -279,18 +356,13 @@ function Get-M365CompromiseResults {
             Update-Progress -currentCount $counter -totalCount $Logevents.count -activity "Processing events" -status "events"
             $tenPercent = $tenPercent + $increment
         }
-# #region Progress bar-old
-#         if($counter % $increment -eq 0){
-#             $percentComplete = ($counter / $Logevents.count) * 100
-#             Write-Progress -Activity "Processing events" -Status "$counter out of $($Logevents.count) events have been processed" -PercentComplete $percentComplete
-#             $tenPercent = $tenPercent + $increment
-#         }
-# #endregion
+
     } #end foreach $evt in $Logevents
     #$maliciousActivities | Export-Csv $outputDir\MaliciousActivities.csv -NoTypeInformation -Encoding UTF8 -Force
     Write-Host "Count of malicious logins: $($maliciousLogins.count)"
     Write-Host "Count of malicious fileops: $($maliciousFileops.count)"
     Write-Host "Count of malicious activities: $($maliciousActivities.count)"
+    Write-Host "Count of malicious mail items accessed: $($maliciousMailItemsAccessed.count)"
     try {
         if ($maliciouslogins.count -gt 0){
             $maliciousLogins | Export-Csv $outputDir\MaliciousLogons.csv -NoTypeInformation -Encoding UTF8 -Force
@@ -309,6 +381,15 @@ function Get-M365CompromiseResults {
         Write-Host "Could not export malicious fileops to CSV file" -ForegroundColor Red
         Write-Host $error[0].Exception -ForegroundColor Red
     }
+    try{
+        if ($maliciousMailItemsAccessed.count -gt 0){
+            $maliciousMailItemsAccessed | Export-Csv $outputDir\MaliciousMailItemsAccessed.csv -NoTypeInformation -Encoding UTF8 -Force
+        }
+    }
+    catch{
+        Write-Host "Could not export malicious mail items accessed to CSV file" -ForegroundColor Red
+        Write-Host $error[0].Exception -ForegroundColor Red
+    }
     try {
         if ($maliciousActivities.count -gt 0){
             $maliciousActivities | Export-Csv $outputDir\MaliciousActivities.csv -NoTypeInformation -Encoding UTF8 -Force
@@ -319,10 +400,8 @@ function Get-M365CompromiseResults {
         Write-Host $error[0].Exception -ForegroundColor Red
     }
 
-    Write-Host "maliciousFileops array contents: $maliciousFileops"
-    Write-Host "maliciousLogins array contents: $maliciousLogins"
-    Write-Host "maliciousActivities array contents: $maliciousActivities"
-}
+
+} #end function Get-M365CompromiseResults
 
 
 
@@ -334,7 +413,7 @@ if($badIPList){
     try{
         $badip = Get-Content $badIPList -ErrorAction Stop
         Write-Host "Bad IP list imported successfully" -ForegroundColor Green
-        Write-Host "Debug:  $badip" -ForegroundColor Yellow
+        Write-Verbose "Debug:  $badip" #-ForegroundColor Yellow
     }
     catch{
         Write-Host "*** Could not import bad ip list" -ForegroundColor Red
@@ -351,16 +430,13 @@ if($allLookups){
             # Code to run when $allLookups is specified
             Write-Host 'Performing IPinfo, IPQS, and Scamalytics lookups...'
             $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Out-GridView -PassThru -Title "Select suspicious IPs").IP 
-            Write-Host  "Debug: Suspect IPs: " 
             $suspectip | out-file $outputDir\ipinfosuspects.txt
             Write-Host 'Performing Scamalytics lookup'
             $suspectip = (Get-Scamalytics_lookup -scamalyticsAPIKey $scamalyticsAPIKey -ipListArray $suspectip -outputDir $outputDir | Where-Object risk -ne "low").IP
-            Write-Host "Debug: Suspect IPs: " 
             $suspectip | Out-File $outputDir\scamalyticssuspects.txt
             Write-Host 'Performing IPQS lookup'
             #TODO edit line below to use a variable for the fraud score threshold
             $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score -ge 40).IP
-            #write-Host "Suspect IPs: " 
             $suspectip | Out-File $outputDir\ipqssuspects.txt
             $badip = $suspectip
             Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir
