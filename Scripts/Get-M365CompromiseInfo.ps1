@@ -1,4 +1,4 @@
-﻿
+﻿function Get-M365CompromiseInfo {
 <#
 
 .Synopsis 
@@ -404,11 +404,6 @@ function Get-M365CompromiseResults {
 } #end function Get-M365CompromiseResults
 
 
-
-
-
-
-
 if($badIPList){
     try{
         $badip = Get-Content $badIPList -ErrorAction Stop
@@ -507,3 +502,4 @@ if ($maliciousActivities){
 Write-Host "Done!" -ForegroundColor Green
 [Console]::Beep()
 
+}
