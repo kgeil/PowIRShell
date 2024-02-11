@@ -17,6 +17,7 @@ myArray = @() #initialize empty array.  This is usually not necessary, but
 # it can help if PowerShell's auto-typing gets things wrong...
 $myArray = @(3,7,9.12,18,33,55,42,42,42)
 
+#Region AD User Queries
 #Descriptions for each command are above the command itself
 # The queries below require Microsoft Remote Server Administration Tools (RSAT)
 # The easiest way to install RSAT:
@@ -26,6 +27,7 @@ dism /online /add-capability /CapabilityName:Rsat.Dns.Tools~~~~0.0.1.0
 #Load the AD commandlets.  This step isn't necessary, but speeds things up.
 Import-Module activedirectory
 
+# MS reference on finding stale accounts: https://social.technet.microsoft.com/wiki/contents/articles/22461.understanding-the-ad-account-attributes-lastlogon-lastlogontimestamp-and-lastlogondate.aspx
 # The command below presents dialog box for entering a credential and storing it securely in the $cred variable
 $cred = Get-Credential 
 
@@ -49,6 +51,9 @@ $domainusers.count
 
 # Populate an array called $activeusers from the $domainusers array, selecting accounts which are enabled
 $activeusers = $domainusers | where enabled -eq true
+
+#reference on AD attribute to use forfinding stale accounts: https://social.technet.microsoft.com/wiki/contents/articles/22461.understanding-the-ad-account-attributes-lastlogon-lastlogontimestamp-and-lastlogondate.aspx
+
 # Produce a list of users who  are enabled, and haven't logged in since 01/01/2023
 $activeusers | select SamAccountName, LastLogonDate | where LastLogonDate -lt '01/01/2023'
 
@@ -69,7 +74,9 @@ $domainusers | where {$_.LastLogonDate -lt '01/01/2023' -and $_.enabled -eq 'tru
 # Note the use of the default variable '$_' as well as the necessity to use where-object before select (because $_ refers to the current item in the
 # pipeline
 
+#Endregion AD User Queries
 
+#Region AD Group Queries
 #sample AD Group queries
 #store credential in $cred.  Any domain credential will suffice
 $cred = get-credential #if you used this above, $cred still works
@@ -86,10 +93,9 @@ $groups | where name -like "*admin*" |select Name
 #ALWAYS LOOK AT BOTH OF THESE!
 $groups | where name -eq "Domain Admins" | select Name, Members
 $groups | where name -eq "Enterprise Admins" | select Name, Members
+#Endregion AD Group Queries
 
-
-
-
+#Region AD Computer Queries
 ## Sample AD Computer queries
 #store credential in $cred.  Any domain credential will suffice
 $cred = get-credential
@@ -108,12 +114,8 @@ $outdatedOS = ('Windows 2000 Server','Windows 7 Enterprise','Windows 7 Professio
 Standard','Windows Server 2008 R2 Standard','Windows XP Professional','Windows Server 2012 R2 Standard')
 
 #Report on machines with old OS:
-foreach ($machine in $activemachines){
-  if ($machine.operatingSystem -in $outdatedOS){
-    $outdatedreport += $machine.name, $machine.IPv4Address,$machine.OperatingSystem
-
-    }
-}
+$activemachines |where OperatingSystem -in $outdatedOS | select name, IPV4Address, OperatingSystem
+#Endregion AD Computer Queries
 
 ##################Begin M365 Audit############################
 <#

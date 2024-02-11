@@ -55,7 +55,8 @@ function Get-AuditdataFrom365JSON {
     param (
         [string]$applicationID
     )
-
+#TODO: Grab application IDS like this:
+#$apps = (Invoke-WebRequest -UseBasicParsing  https://raw.githubusercontent.com/Beercow/Azure-App-IDs/master/Azure_Application_IDs.csv).content | ConvertFrom-Csv
     switch ($applicationID) {
         "23523755-3a2b-41ca-9315-f81f3f566a95" { "ACOM Azure Website" }
         "69893ee3-dd10-4b1c-832d-4870354be3d8" { "AEM-DualAuth" }

@@ -1,4 +1,4 @@
-﻿param (
+param (
     [string]$HostListPath,
     [string]$dnsServer="1.1.1.1",
     [string]$outputdir 
@@ -9,6 +9,10 @@
 
 .Synopsis 
   Takes a list of hostnames and retrieves their IP address
+
+.DESCRIPTION
+  Addmittedly not the most useful script, but I got tired of making convoluted one-liners to do this. I plan to add
+  more query types in the future, but for now it just does A and AAAA.
 
   .Parameter HostListPath
   path to a list of hostnames separated by a carriage return.
@@ -24,7 +28,7 @@
   }
   catch {
   Write-Host "DEBUG: failed to resolve "$hostToCheck -ForegroundColor Yellow
-      $qtype = 'A' # we need to use querytype later, so this just getst this out of the way now.
+      $qtype = 'A' # we need to use querytype later, so this just gets this out of the way now.
       $result = [PSCustomObject]@{
       'QueryType' = $qtype
       'Name' = $hostToCheck
