@@ -1,7 +1,29 @@
 # PowIRShell
 PowerShell scripts useful for incident response and Active Directory auditing.
 
-This is a collection of Powershell scripts which are useful for information security tasks.
+This is a collection of Powershell scripts which are useful for information security tasks. Currently the
+main script Get-M365CompromiseInfo.
+
+## Quick start:
+```
+git clone https://github.com/kgeil/PowIRShell.git
+Import-Module .\M365CompromiseInfo.psd1
+Get-M365CompromiseInfo -searchdir C:\temp\365Comp\UAL -outputDir C:\temp\365Comp\ -ipinfoLookup -ipinfoAPIKey '<IpInfoKeyHere>' -ScamalyticsLookup -scamalyticsAPIKey '<ScamalyticsKeyHere>'
+```
+The script will then start doing its work.  A gridview will appear, offering you the option of selecting IP addresses based on ASN, geo-ip lookup, etc.  If you pay for an IPQS license, this may not be necessary.  The grid allows you to weed out IP addresses to save time and money on threat intel lookups.
+
+The grid looks like this.  Select your IPs, and click OK in the gridview.
+![image](https://github.com/kgeil/PowIRShell/assets/10849557/a8663036-3901-40df-9bfb-3123e3790fe4)
+
+## Caveat Emptor: The results of this script are only as good as your IP threat intel lookups.  If 
+## you fail to select an IP in the gridview, it will not be checked!  Also, if a malicious IP 
+## comes through as non-malicious from scamalytics or IPQS, it will not be detected by the script.
+
+The script will produce some log files, and two csv files: MaliciousLogons.csv, and MaliciousMailItemsAccessed.csv. These files contain event information for activities associated with malicious IPs detected by threat intel services.
+![image](https://github.com/kgeil/PowIRShell/assets/10849557/af3ea276-50ec-48a9-94cb-9445d90e591a)
+
+
+## Other stuff:
 
 The script "PowerConTalk.ps1" is not really  a script, but rather  a series of useful commands.  The first section provides ideas for auditing Active Directory, and the second section is a walkthrough of a business email compromise investigation, using some of the scripts from this repository.
 
