@@ -424,6 +424,7 @@ if($ScamalyticsLookup -and $IPQSLookup -and $ipinfoLookup){
 if($allLookups){
             # Code to run when $allLookups is specified
             Write-Host 'Performing IPinfo, IPQS, and Scamalytics lookups...'
+            Write-Host 'Use the gridview to select suspicious IPs' -ForegroundColor Yellow
             $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Out-GridView -PassThru -Title "Select suspicious IPs").IP 
             $suspectip | out-file $outputDir\ipinfosuspects.txt
             Write-Host 'Performing Scamalytics lookup'
