@@ -30,7 +30,7 @@ function Get-clean_Ip {
   [CmdletBinding()]
   param (
     [Parameter(Mandatory = $true)]
-    [string[]]$iplist
+    $iplist
   )
 
   $cleanIPlist = @()

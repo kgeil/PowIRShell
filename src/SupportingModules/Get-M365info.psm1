@@ -163,6 +163,7 @@ function Get-AuditdataFrom365JSON {
         "14d82eec-204b-4c2f-b7e8-296a70dab67e" { "Microsoft Graph Command Line Tools" }
         "7ae974c5-1af7-4923-af3a-fb1fd14dcb7e" { "OutlookUserSettingsConsumer" }
         "5572c4c0-d078-44ce-b81c-6cbf8d3ed39e" { "Vortex [wsfed enabled]" }
+        "00000002-0000-0ff1-ce00-000000000000" { "Office 365 Exchange Online" }
         default { "Unknown Application" }
     }
   }

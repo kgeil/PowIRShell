@@ -161,6 +161,9 @@ function Confirm-apikeys{
 Confirm-apikeys #function to ensure that API keys are provided if needed.
 Function Update-Progress($currentCount, $totalCount, $activity, $status) {
     $percentComplete = ($currentCount / $totalCount) * 100
+    if ($percentComplete -gt 100) {
+        $percentComplete = 100
+    }
     Write-Progress -Activity $activity -Status "$currentCount out of $totalCount $status have been processed" -PercentComplete $percentComplete
 }
 if (Get-Module -Name "M365CompromiseInfo") {
