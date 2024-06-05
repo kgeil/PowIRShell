@@ -1,11 +1,32 @@
-﻿#Basics:  
+﻿##################Basics:#################
 cd # linux commands are aliased to PowerShell commands! Technically, cd is aliased to 
 #PowerShell's set-location cmdlet
 cd C:\Us#<hit the tab key!>  Tab completion is critical to success
 
-#find commands:  
+mkdir C:\scripts\output -Force # make a directory.  -Force is necessary to create a directory with a parent directory that doesn't exist
+# I typically put scripts in C:\scripts.  We will use this directory for the rest of the demo
+mkdir C:\temp # if you already have a C:\temp directory, this will throw an error.
+echo 'this is a test' | Out-File 'C:\temp\file with spaces in name'
+# retrieve short 8.3 names: A way to easily handle files with spaces in file names
+cmd.exe /c "dir /x" C:\temp
+
+Get-Content $env:USERPROFILE\AppData<hit tab key> # this will auto-complete with the path to your AppData directory
+C:\Users\KevinGeil\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt | Select-String 'mystr'
+# the above command will get-the content of the history file, and search for 'mystr' in the file.
+# if you want to just scroll through everything in the history file, you can use the following command:
+Get-Content $env:USERPROFILE\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt | out-host -Paging
+# the -Paging flag is like the Linux "less" command.  It allows you to scroll through the output one page at a time
+Get-History # this command will show you the history of commands you've run in the current session
+
+# Pipelining: PowerShell is good at piping the output of one command into another command.
+# We have already used this in a few places.
+
+#finding commands:  
 
 Get-command *json* # gcm is a built-in alias
+
+#Getting help:
+Get-Help ConvertFrom-Json -ShowWindow # opens help for the command in a nice, searchable window.
 
 #Get-help <command> -ShowWindow
 # variables: start with a $, convention is to start lowercase and use $camelCase
