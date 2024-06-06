@@ -37,6 +37,20 @@ $myvar + 8
 $myArray = @() #initialize empty array.  This is usually not necessary, but 
 # it can help if PowerShell's auto-typing gets things wrong...
 $myArray = @(3,7,9.12,18,33,55,42,42,42)
+Get-ExecutionPolicy
+$services = Get-Service
+$services.Count
+$services[0] | Get-Member
+$services | where status -eq 'Running' | select ServiceName
+$running = $services | where status -eq 'running'
+$running.Count
+$running[44] | ft
+Dir env:\
+$env:OS
+$env:PATH
+Set-item env:\scamalyticsAPIKey -value "<apikey>"
+$env:scamalyticsAPIKey
+
 
 #Region AD User Queries
 #Descriptions for each command are above the command itself
