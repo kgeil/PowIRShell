@@ -34,7 +34,7 @@ $myvar = 3
 $myvar + 8
 
 # But that's boring:  Arrays are where much of the fun is in PowerShell.
-myArray = @() #initialize empty array.  This is usually not necessary, but 
+$myArray = @() #initialize empty array.  This is usually not necessary, but 
 # it can help if PowerShell's auto-typing gets things wrong...
 $myArray = @(3,7,9.12,18,33,55,42,42,42)
 
