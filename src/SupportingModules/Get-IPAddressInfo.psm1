@@ -147,6 +147,7 @@ function Get-clean_Ip {
       $arrayItems = [PSCustomObject]@{
         'IP' = $result.ip
         'City' = $result.city
+        'Region' = $result.region
         'Country' = $result.country
         'Org' = $result.org
       }

@@ -132,21 +132,6 @@ param (
     [int]$fraudScoreThreshold = 75
 )
 $ErrorActionPreference = "Stop"
-
-if (Get-Module Microsoft.PowerShell.ConsoleGuiTools){
-    Write-Host "Module Microsoft.PowerShell.ConsoleGuiTools is installed. Continuing..."
-}
-else {
-    try{
-        Install-Module Microsoft.PowerShell.ConsoleGuiTools -Force -AllowClobber
-    }
-    catch{
-        Write-Host "Could not install Microsoft.PowerShell.ConsoleGuiTools. Exiting." -ForegroundColor Red
-        Write-Host $error[0].Exception -ForegroundColor Red
-        break
-    }
-}
-
 function Confirm-apikeys{
 
     if ($ScamalyticsLookup){
@@ -265,13 +250,11 @@ function Get-M365CompromiseResults {
     $maliciousMailItemsAccessed=@()
     [array]$maliciousActivities=@()
     Write-Host "Starting to check logs for malicious activity..." -ForegroundColor Green
-    Write-Host "Writing Bad IP list to $outputDir\BadIPList.txt" -ForegroundColor Green
-    $badip | Out-File $outputDir\BadIPList.txt
 
 
     Foreach($evt in $Logevents){
         if((Get-IPAddress -ipField $evt.ClientIPAddress) -in $badip -or (Get-IPAddress -ipField $evt.ActorIPAddress) -in $badip){
-            Write-Host "Debug: IP IN BADIP: $($evt.ClientIPAddress) $($evt.ActorIPAddress)" -ForegroundColor Yellow
+            #Write-Host "Debug: IP IN BADIP: $($evt.ClientIPAddress)" -ForegroundColor Yellow
             $applicationName = Get-M365ApplicationNameFromAppID  -applicationID $evt.ApplicationId
             if($evt.Operation -in $loginevents ){
                 foreach($extendedProperty in $evt.ExtendedProperties){
@@ -445,8 +428,7 @@ if($allLookups){
             # Code to run when $allLookups is specified
             Write-Host 'Performing IPinfo, IPQS, and Scamalytics lookups...'
             Write-Host 'Use the gridview to select suspicious IPs' -ForegroundColor Yellow
-            $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Sort-Object -Property Country, Region,City,org,IP | Out-ConsoleGridView -Title "Select suspicious IPs").IP
-            $suspectip | Out-File $outputDir\IPSelection.txt  
+            $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Out-GridView -PassThru -Title "Select suspicious IPs").IP 
             $suspectip | out-file $outputDir\ipinfosuspects.txt
             Write-Host 'Performing Scamalytics lookup'
             $suspectip = (Get-Scamalytics_lookup -scamalyticsAPIKey $scamalyticsAPIKey -ipListArray $suspectip -outputDir $outputDir | Where-Object risk -ne "low").IP
@@ -461,35 +443,25 @@ if($allLookups){
 
 elseif ($badIPList) {
     Write-Host 'Using bad IP list to parse UAL for malicious activity...'
-    $host.EnterNestedPrompt()
     Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir 
 }
 elseif ($ipinfoLookup -and $IPQSLookup -and !$ScamalyticsLookup) {
     Write-Host 'Performing IPinfo and IPQS lookups...'
-    $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Sort-Object -Property Country, Region,City,org,IP | Out-ConsoleGridView -Title "Select suspicious IPs").IP 
-    $suspectip | Out-File $outputDir\IPSelection.txt 
+    $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Out-GridView -PassThru -Title "Select suspicious IPs").IP 
     $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score $fraudScoreThreshold).IP
     $badip = $suspectip
-    $suspectip | Out-File $outputDir\ipinfosuspects.txt
     Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir
 }
 elseif ($ipinfoLookup -and $ScamalyticsLookup -and !$IPQSLookup) {
     Write-Host 'Performing IPinfo and Scamalytics lookups...'
-    Write-Host "Sending to ConsoleGridView for selection..."
-    $gridview = Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir
-    $suspectip = ($gridview | Sort-Object -Property Country, Region,City,org,IP | Out-ConsoleGridView -Title "Select suspicious IPs").IP
-    #$suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir).IP  
-    $suspectip | Out-File $outputDir\IPSelection.txt
+    $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Out-GridView -PassThru -Title "Select suspicious IPs").IP 
     $suspectip = (Get-Scamalytics_lookup -scamalyticsAPIKey $scamalyticsAPIKey -ipListArray $suspectip -outputDir $outputDir | Where-Object risk -ne "low").IP
     $badip = $suspectip
-    # $host.EnterNestedPrompt() #one of powershell's best kept secrets.  It's like a break point.
-
     Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir
 }
 elseif ($ipinfoLookup -and !$ScamalyticsLookup -and !$IPQSLookup) {
     Write-Host "Performing IPinfo lookup..."
-    $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Sort-Object -Property Country, Region,City,org,IP | Out-ConsoleGridView -Title "Select suspicious IPs").IP 
-    $suspectip | Out-File $outputDir\IPSelection.txt 
+    $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Out-GridView -PassThru -Title "Select suspicious IPs").IP 
     Write-Host "Done performing IPinfo lookup!"
     $badip = $suspectip
     Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir
