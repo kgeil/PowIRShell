@@ -1,22 +1,33 @@
 ﻿##################Basics:#################
+pwd # print working directory.  Like linux 'pwd' command
+whoami # print current user.  Like linux 'whoami' command
+ 
 cd # linux commands are aliased to PowerShell commands! Technically, cd is aliased to 
 #PowerShell's set-location cmdlet
 cd C:\Us#<hit the tab key!>  Tab completion is critical to success
-
+ls # list directory contents.  Like linux 'ls' command ls is aliased to PowerShell's get-childitem cmdlet
+# You can also use 'dir', which is also aliased to get-childitem
+# Creating directories:
 mkdir C:\scripts\output -Force # make a directory.  -Force is necessary to create a directory with a parent directory that doesn't exist
 # I typically put scripts in C:\scripts.  We will use this directory for the rest of the demo
 mkdir C:\temp # if you already have a C:\temp directory, this will throw an error.
 echo 'this is a test' | Out-File 'C:\temp\file with spaces in name'
 # retrieve short 8.3 names: A way to easily handle files with spaces in file names
 cmd.exe /c "dir /x" C:\temp
+# history and up/down arrow:
+history # this command shows the history of commands you've run in the current session
+# PowerShell also keeps a persistent history of commands you've run in past sessions.
+# The history file is stored in:
+# $env:USERPROFILE\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
+# You can search this file for past commands you've run like this:
 
 Get-Content $env:USERPROFILE\AppData<hit tab key> # this will auto-complete with the path to your AppData directory
 C:\Users\KevinGeil\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt | Select-String 'mystr'
-# the above command will get-the content of the history file, and search for 'mystr' in the file.
+# the above command will get the content of the history file, and search for 'mystr' in the file.
 # if you want to just scroll through everything in the history file, you can use the following command:
 Get-Content $env:USERPROFILE\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt | out-host -Paging
 # the -Paging flag is like the Linux "less" command.  It allows you to scroll through the output one page at a time
-Get-History # this command will show you the history of commands you've run in the current session
+Get-History # this command will show you the history of commands you've run in the current session, same as the 'history' command
 
 # Pipelining: PowerShell is good at piping the output of one command into another command.
 # We have already used this in a few places.
@@ -26,29 +37,50 @@ Get-History # this command will show you the history of commands you've run in t
 Get-command *json* # gcm is a built-in alias
 
 #Getting help:
+#Get-help <command> -ShowWindow
 Get-Help ConvertFrom-Json -ShowWindow # opens help for the command in a nice, searchable window.
 
-#Get-help <command> -ShowWindow
+#explaining execution policies:
+Get-ExecutionPolicy # check current execution policy
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser # set execution policy to RemoteSigned for current user only
+# RemoteSigned allows you to run scripts you've written locally, but requires that scripts downloaded 
+#from the internet be signed by a trusted publisher
+# Reference: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies
+
 # variables: start with a $, convention is to start lowercase and use $camelCase
-$myvar = 3
-$myvar + 8
+$myVar = 3
+$myVar + 8
 
 # But that's boring:  Arrays are where much of the fun is in PowerShell.
 $myArray = @() #initialize empty array.  This is usually not necessary, but 
 # it can help if PowerShell's auto-typing gets things wrong...
 $myArray = @(3,7,9.12,18,33,55,42,42,42)
-Get-ExecutionPolicy
+$myarray.Count #number of items in array
+$myarray[0] #first item in array.  Arrays are 0-indexed
+$myarray[3] #fourth item in array
+$myarray[-1] #last item in array.  Negative indices count from the end
+$myarray | where {$_ -gt 20} # items in array greater than 20.  Note use of default variable $_
+$myarray | where {$_ -eq 42} # items in array equal to 42
+$myarray | sort -Descending # sort array in descending order
+# Getting service information
+
 $services = Get-Service
 $services.Count
-$services[0] | Get-Member
+$services[11] | Get-Member
 $services | where status -eq 'Running' | select ServiceName
 $running = $services | where status -eq 'running'
 $running.Count
 $running[44] | ft
-Dir env:\
-$env:OS
-$env:PATH
-Set-item env:\scamalyticsAPIKey -value "<apikey>"
+
+# Environment variables
+
+Dir env:\ # list environment variables.  'dir' is aliased to get-childitem
+$env:USERPROFILE # print user profile path  
+$env:COMPUTERNAME # print computer name
+$env:OS # print operating system
+$env:PATH # print system path
+#Set-item env:\scamalyticsAPIKey -value "<apikey>" # set an environment variable
+Set-item env:\scamalyticsAPIKey -value "randomchars" # set an environment variable
 $env:scamalyticsAPIKey
 
 
@@ -56,8 +88,11 @@ $env:scamalyticsAPIKey
 #Descriptions for each command are above the command itself
 # The queries below require Microsoft Remote Server Administration Tools (RSAT)
 # The easiest way to install RSAT:
-dism /online /add-capability /CapabilityName:Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0
-dism /online /add-capability /CapabilityName:Rsat.Dns.Tools~~~~0.0.1.0
+# Open an elevated PowerShell prompt (run as administrator)
+Add-WindowsCapability -Online -Name "Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0"
+#The following 2 commands may work for older systems for which the command above doesn't work:
+#dism /online /add-capability /CapabilityName:Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0
+#dism /online /add-capability /CapabilityName:Rsat.Dns.Tools~~~~0.0.1.0
 
 #Load the AD commandlets.  This step isn't necessary, but speeds things up.
 Import-Module activedirectory
@@ -71,7 +106,10 @@ myArray = @() # initialize a variable, $domainusers as an empty array.  Occasion
 
 # The query below retrieves all properties for all domain users, and stores it in the $domainusers array variable
 # PowerShell's auto-variable typing works well most of the time, and in this case, it populates
-# an array for us with all domain user objects.  
+# an array for us with all domain user objects. 
+
+#################Caution:  The command below can take a long time to run in large environments##############
+#################These commands will only work if you have network connectivity to a domain controller##########
 $domainusers=Get-ADUser -filter * -Properties * -Server <DC-IP> -Credential $cred
 
 # Optional:  export the $domainusers array into an xml text file for future storage.  It can be useful to keep 
@@ -86,6 +124,11 @@ $domainusers.count
 
 # Populate an array called $activeusers from the $domainusers array, selecting accounts which are enabled
 $activeusers = $domainusers | where enabled -eq true
+#display number of active users
+$activeusers.count
+#view properties available for user objects in the $activeusers array
+$activeusers[0] | get-member
+
 
 #reference on AD attribute to use forfinding stale accounts: https://social.technet.microsoft.com/wiki/contents/articles/22461.understanding-the-ad-account-attributes-lastlogon-lastlogontimestamp-and-lastlogondate.aspx
 
@@ -160,6 +203,40 @@ $myhash = @{}
 $myports = @(53,110,143,443)
 # Test-Netconnection is a lovely little utility:  https://docs.microsoft.com/en-us/powershell/module/nettcpip/test-netconnection?view=windowsserver2022-ps
 foreach($port in $myports){$myhash.add($port,(Test-NetConnection 8.8.8.8 -Port $port).TcpTestSucceeded)}
+
+##################Begin AzureAD Audit############################
+#Requires the AzureAD module
+#Install-Module -Name AzureAD  #uncomment this line to install the AzureAD module if you don't have it already
+Import-Module AzureAD
+#Connect to AzureAD
+Connect-AzureAD -AccountId kevin.geil@deepseas.com
+
+#create array containing all AzureAD users
+$aadusers = @(Get-AzureADUser -All $true)
+#display number of AzureAD users
+$aadusers.count
+#display available attributes for an account in the $aadusers array
+$aadusers | get-member
+#display interesting info about the user accounts in the $aadusers array
+$aadusers | select DisplayName, UserPrincipalName, AccountEnabled, LastDirSyncTime | out-host -paging
+#create array of enabled users
+$enabledaadusers = $aadusers | where AccountEnabled -eq $true
+#display number of enabled AzureAD users
+$enabledaadusers.count
+#Create an array called $staleaadusers containing enabled AzureAD users who haven't synced since 01/01/2023
+$staleaadusers = $enabledaadusers | where LastDirSyncTime -lt '01/01/2023'
+#display number of stale AzureAD users
+$staleaadusers.count
+#display interesting info about the user accounts in the $staleaadusers array
+$staleaadusers | select DisplayName, UserPrincipalName, LastDirSyncTime | out-host -paging
+#find active users with no mfa enabled
+# we need to install MS Graph to assess mfa status
+#Install-Module Microsoft.Graph -Scope CurrentUser
+Import-Module Microsoft.Graph
+Connect-MgGraph -Scopes "User.Read.All", "Group.Read.All", "UserAuthenticationMethod.Read.All" -tenantid "d33pseas.com"
+$d33pUsers = Get-MgUser -All
+$d33pUsers.Count
+foreach ($user in $d33pUsers){$methods = Get-MgUserAuthenticationMethod -UserId $user.Id; Write-Host $user.DisplayName: $methods.count}
 
 
 
