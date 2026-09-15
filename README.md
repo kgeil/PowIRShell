@@ -9,6 +9,8 @@ format and looks up IP addresses using either IPInfo.io, Scamalytics, IPQualityS
 ```
 git clone https://github.com/kgeil/PowIRShell.git
 Import-Module .\M365CompromiseInfo.psd1
+Connect-ExchangeOnline -UserPrincipalName analyst@contoso.com
+Get-M365UnifiedAuditLog -StartDate '09/01/2026' -EndDate '09/02/2026' -OutputDir C:\temp\365Comp\UAL
 Get-M365CompromiseInfo -searchdir C:\temp\365Comp\UAL -outputDir C:\temp\365Comp\ -ipinfoLookup -ipinfoAPIKey '<IpInfoKeyHere>' -ScamalyticsLookup -scamalyticsAPIKey '<ScamalyticsKeyHere>'
 ```
 The script will then start doing its work.  A gridview will appear, offering you the option of selecting IP addresses based on ASN, geo-ip lookup, etc.  If you pay for an IPQS license, this may not be necessary.  The grid allows you to weed out IP addresses to save time and money on threat intel lookups.
