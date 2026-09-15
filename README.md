@@ -15,7 +15,7 @@ Get-M365CompromiseInfo -searchdir C:\temp\365Comp\UAL -outputDir C:\temp\365Comp
 ```
 The script will then start doing its work.  A gridview will appear, offering you the option of selecting IP addresses based on ASN, geo-ip lookup, etc.  If you pay for an IPQS license, this may not be necessary.  The grid allows you to weed out IP addresses to save time and money on threat intel lookups.
 
-### Getting UAL data straight from your tenant (no Invictus Extractor needed):
+### Getting UAL data straight from your tenant 
 If you don't already have UAL JSON exports on disk, `Get-M365UnifiedAuditLog` will pull them directly from Microsoft 365 and write them into the format `Get-M365CompromiseInfo` expects.
 ```
 Connect-ExchangeOnline -UserPrincipalName analyst@contoso.com
