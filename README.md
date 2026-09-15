@@ -13,6 +13,15 @@ Get-M365CompromiseInfo -searchdir C:\temp\365Comp\UAL -outputDir C:\temp\365Comp
 ```
 The script will then start doing its work.  A gridview will appear, offering you the option of selecting IP addresses based on ASN, geo-ip lookup, etc.  If you pay for an IPQS license, this may not be necessary.  The grid allows you to weed out IP addresses to save time and money on threat intel lookups.
 
+### Getting UAL data straight from your tenant (no Invictus Extractor needed):
+If you don't already have UAL JSON exports on disk, `Get-M365UnifiedAuditLog` will pull them directly from Microsoft 365 and write them into the format `Get-M365CompromiseInfo` expects.
+```
+Connect-ExchangeOnline -UserPrincipalName analyst@contoso.com
+Get-M365UnifiedAuditLog -StartDate (Get-Date).AddDays(-7) -EndDate (Get-Date) -OutputDir C:\temp\365Comp\UAL
+Get-M365CompromiseInfo -searchdir C:\temp\365Comp\UAL\ -outputDir C:\temp\365Comp\ -ipinfoLookup -ipinfoAPIKey '<IpInfoKeyHere>'
+```
+Requires the `ExchangeOnlineManagement` module and a role that can read audit logs (Compliance Administrator, Security Reader, Global Reader, or View-Only Audit Logs). Use PowerShell's built-in help for full parameter details: `Get-Help Get-M365UnifiedAuditLog -ShowWindow`.
+
 The grid looks like this.  Select your IPs, and click OK in the gridview.
 
 ![image](https://github.com/kgeil/PowIRShell/assets/10849557/a8663036-3901-40df-9bfb-3123e3790fe4)
@@ -36,6 +45,7 @@ The script "PowerConTalk.ps1" is not really  a script, but rather  a series of u
 * Get-IPQSLookup.ps1: Input: list of IP addresses separated by newlines. Output: IP Quality Score's threat intelligence information. API Key required. Get it here: *https://www.ipqualityscore.com/*
 * Get-Scamalytics_lookup.ps1: Input: list of IP addresses separated by newlines. Output: Scamalytics threat intelligence information. API Key required. Get it here: *https://scamalytics.com/*
 * Get-M365CompromiseInfo.ps1. Use PowerShell's built-in help for usage: Get-help &lt; path-to-script &gt; -ShowWindow
+* Get-M365UnifiedAuditLog.ps1: Pulls UAL events directly from your M365 tenant via Search-UnifiedAuditLog and writes them out in the JSON format Get-M365CompromiseInfo expects, so you can skip a separate extraction tool. Requires the ExchangeOnlineManagement module and an active Connect-ExchangeOnline session. Use PowerShell's built-in help for usage: Get-help &lt; path-to-script &gt; -ShowWindow
 * PowerConTalk.ps1 Used to provide a live demo of some useful PowerShell techniques and some scripts from this repository.
 * Get-Artifacts.ps1: Parses evtx files and returns output usful in incident response triage. Use PowerShell's built-in help for usage: Get-help &lt; path-to-script &gt; -ShowWindow.
 * Resolve-Hostnames.ps1: *A work in progress*.  Takes a list of hostnames and returns A and AAAA records. 
