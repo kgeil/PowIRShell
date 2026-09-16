@@ -63,27 +63,27 @@ function Get-clean_Ip {
     param (
       $auditevents
     )
-    $allip = $auditevents.ClientIP 
-    $allip += $auditevents.ActorIPAddress 
+    $allip = $auditevents.ClientIP
+    $allip += $auditevents.ActorIPAddress
     $allip = $allip | Sort-Object -Unique
     $allip = Get-clean_Ip -iplist $allip
     Return $allip
-    
+
   }
 
   function Get-IPInfoLookup {
     <#
-    .Synopsis 
+    .Synopsis
       *API KEY REQUIRED* This script checks a list of IP addresses against IPinfo.io, and returns city, country, and ASN
-  
+
     .Parameter IPListPath
       Path to a text file list of IP addresses separated by a carriage return.
       This function can also be used in other scripts by passing
       an array of IP addresses as the $iplistarray parameter
-      
+
     .Parameter ipListArray
       An array of IP addresses passed into the function
-  
+
     .Parameter ipinfoAPIKey
       API key for IP info https://ipinfo.io/
     #>
@@ -92,9 +92,13 @@ function Get-clean_Ip {
       [string]$IPListPath,
       [string]$ipinfoAPIKey,
       [string]$outputdir,
-      [array]$ipListArray 
+      [array]$ipListArray
     )
-  
+
+    if (-not $ipinfoAPIKey) {
+      throw "No IPinfo API key provided. Pass -ipinfoAPIKey (sign up at https://ipinfo.io/)."
+    }
+
     if ($ipListArray) {
       $ips = $ipListArray
     }
@@ -104,30 +108,61 @@ function Get-clean_Ip {
     else {
       throw "No IP addresses specified"
     }
-  
+
+    # Filter out blank/malformed entries so one bad line doesn't derail the whole batch
+    $rawCount = @($ips).Count
+    $ips = Get-clean_Ip -iplist $ips
+    $skipped = $rawCount - $ips.Count
+    if ($skipped -gt 0) {
+      Write-Host "Skipped $skipped invalid/unparseable entr$(if ($skipped -eq 1) { 'y' } else { 'ies' }) from the input list" -ForegroundColor Yellow
+    }
+
     Write-Host "There are $($ips.Count) IP addresses to check" -ForegroundColor Green
     $lookupfailure = 0
     $noOrg = 0
     $bogon = 0
     $ipinfourl = "http://ipinfo.io/"
     $ipInfoArray = @()
-  
+    $failures = @()
+
     foreach ($ip in $ips) {
       $entireURL = "$ipinfourl$ip"+"?"+"token="+$ipinfoAPIKey
-  
+
       try {
         $result = Invoke-RestMethod -Uri $entireURL
       }
       catch {
-        #Write-Host "There was an error retrieving information for $ip" -ForegroundColor Red
-        $errorlog = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
-        $errorlog | Out-File -Append $outputDir\ipinfoerrors.txt -Force -Encoding UTF8  
-        Write-Host $error[0].Exception -ForegroundColor Red
-        Write-Host "Continuing..."
-        $lookupfailure++
-        continue
+        # IPinfo rate-limits (HTTP 429); give it one retry before logging a failure
+        $statusCode = $null
+        try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {}
+        if ($statusCode -eq 429) {
+          Write-Host "Rate limited on $ip, waiting 5s and retrying once..." -ForegroundColor Yellow
+          Start-Sleep -Seconds 5
+          try {
+            $result = Invoke-RestMethod -Uri $entireURL
+          }
+          catch {
+            $errorlog = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
+            $errorlog | Out-File -Append $outputDir\ipinfoerrors.txt -Force -Encoding UTF8
+            Write-Host $error[0].Exception -ForegroundColor Red
+            Write-Host "Continuing..."
+            $lookupfailure++
+            $failures += [PSCustomObject]@{ Item = $ip; Reason = "rate limited, retry failed: $($_.Exception.Message)" }
+            continue
+          }
+        }
+        else {
+          #Write-Host "There was an error retrieving information for $ip" -ForegroundColor Red
+          $errorlog = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
+          $errorlog | Out-File -Append $outputDir\ipinfoerrors.txt -Force -Encoding UTF8
+          Write-Host $error[0].Exception -ForegroundColor Red
+          Write-Host "Continuing..."
+          $lookupfailure++
+          $failures += [PSCustomObject]@{ Item = $ip; Reason = $_.Exception.Message }
+          continue
+        }
       }
-  
+
       # write error to a log file
       # if ($result.StatusCode -ne 200) {
       #   $errorLog = "$ip, $($result.StatusCode)"
@@ -135,7 +170,7 @@ function Get-clean_Ip {
       #   $lookupfailure++
       #   continue
       # }
-  
+
       if ($result -match "bogon") {
         # write to error log
         $errorLog = "$ip  bogon [RFC1918]"
@@ -143,7 +178,7 @@ function Get-clean_Ip {
         $bogon++
         continue
       }
-  
+
       $arrayItems = [PSCustomObject]@{
         'IP' = $result.ip
         'City' = $result.city
@@ -151,39 +186,43 @@ function Get-clean_Ip {
         'Country' = $result.country
         'Org' = $result.org
       }
-  
+
       # replace commas in org field with dashes, using a try/catch block so that if commas are not found, the user doesn't see an error
       try {
         $arrayItems.Org = $arrayItems.Org -replace ",","-"
       }
       catch {}
-  
+
       # test org field for null value, if null, replace with "No Org"
       if (-not $arrayItems.Org) {
         $arrayItems.Org = "No-Org"
         $noOrg++
       }
-  
+
       $ipInfoArray += $arrayItems
-    } 
-  
+    }
+
     Write-Host "There were $noOrg records without ASN results" -ForegroundColor Green
     Write-host "There were $bogon records with RFC1918 IP addresses" -ForegroundColor Green
-  
+    if ($failures.Count -gt 0) {
+      Write-Host "Failed lookups ($($failures.Count)):" -ForegroundColor Red
+      $failures | ForEach-Object { Write-Host "  $($_.Item): $($_.Reason)" -ForegroundColor Red }
+    }
+
     $ipInfoArray | Export-Csv -Path $outputDir\ipinforesults.csv -NoTypeInformation
     Return $ipInfoArray
   }
- 
- 
+
+
 
   function Get-IPQSLookup {
     <#
-    .Synopsis 
+    .Synopsis
       *API KEY REQUIRED* This script checks a list of IP addresses against IPQS:  https://www.ipqualityscore.com/, and valuable information
     .Description
-    Ipqualityscore.com is a highly regarded source of IP threat intelligence. This script has two 
+    Ipqualityscore.com is a highly regarded source of IP threat intelligence. This script has two
     optional parameters, $IPListPath and $ipListArray. If $IPListPath is specified, the script will read
-    IP addresses from a text file, one per line. If $ipListArray is specified, the script will use an 
+    IP addresses from a text file, one per line. If $ipListArray is specified, the script will use an
     array of IP addresses passed into the function. The script will then query ipqualityscore.com and return
     the following information for each IP address: fraud_score, country_code, region, city, ISP, ASN, organization.
     The script will write the results to a file named ipQSresults.txt in the directory specified by the outputdir
@@ -199,11 +238,11 @@ function Get-clean_Ip {
     .Inputs
       Either a text file containing a list of IP addresses, or an array of IP addresses
     .Outputs
-      Outputs are written to the directory specified with thte outputdir parameter.  Two text outputs are created: 
-      1. A CSV file containing the results of the IPQS lookup named ipQSresults.csv, and: 
+      Outputs are written to the directory specified with thte outputdir parameter.  Two text outputs are created:
+      1. A CSV file containing the results of the IPQS lookup named ipQSresults.csv, and:
       2. An error log file named ipqs_errors.txt
     #>
-    
+
       [CmdletBinding()]
       param (
         [Parameter(Mandatory=$true)]
@@ -213,7 +252,7 @@ function Get-clean_Ip {
         [string]$IPListPath,
         [array]$ipListArray
       )
-    
+
       if ($ipListArray) {
         $ips = $ipListArray
       }
@@ -223,33 +262,64 @@ function Get-clean_Ip {
       else {
         throw "No IP addresses specified"
       }
-    
+
+      # Filter out blank/malformed entries so one bad line doesn't derail the whole batch
+      $rawCount = @($ips).Count
+      $ips = Get-clean_Ip -iplist $ips
+      $skipped = $rawCount - $ips.Count
+      if ($skipped -gt 0) {
+        Write-Host "Skipped $skipped invalid/unparseable entr$(if ($skipped -eq 1) { 'y' } else { 'ies' }) from the input list" -ForegroundColor Yellow
+      }
+
       Write-Host "There are $($ips.Count) IP addresses to check" -ForegroundColor Green
       $lookupfailure = 0
       $ipQSurl = "https://www.ipqualityscore.com/api/json/ip/"
       $exportarray = @()
-    
+      $failures = @()
+
       foreach ($ip in $ips) {
         #$entireUrl = "$ipQSurl$ipQSAPIKey/$ip?strictness=0&allow_public_access_points=true&fast=true&lighter_penalties=true&mobile=true"
         $entireURL = "$ipQSurl"+"$ipQSAPIKey"+"/"+"$ip"+"?strictness=0&allow_public_access_points=true&fast=true&lighter_penalties=true&mobile=true"
         Write-Verbose $entireUrl
-    
+
         try {
           $result = Invoke-RestMethod -Uri $entireUrl
         }
         catch {
-          $errorMessage = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
-          Write-Error $errorMessage
-          $errorMessage | Out-File -Append $outputDir\ipqs_errors.txt -Encoding UTF8
-          $lookupfailure++
-          continue
+          # IPQS rate-limits (HTTP 429); give it one retry before logging a failure
+          $statusCode = $null
+          try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {}
+          if ($statusCode -eq 429) {
+            Write-Host "Rate limited on $ip, waiting 5s and retrying once..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 5
+            try {
+              $result = Invoke-RestMethod -Uri $entireUrl
+            }
+            catch {
+              $errorMessage = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
+              Write-Error $errorMessage
+              $errorMessage | Out-File -Append $outputDir\ipqs_errors.txt -Encoding UTF8
+              $lookupfailure++
+              $failures += [PSCustomObject]@{ Item = $ip; Reason = "rate limited, retry failed: $($_.Exception.Message)" }
+              continue
+            }
+          }
+          else {
+            $errorMessage = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
+            Write-Error $errorMessage
+            $errorMessage | Out-File -Append $outputDir\ipqs_errors.txt -Encoding UTF8
+            $lookupfailure++
+            $failures += [PSCustomObject]@{ Item = $ip; Reason = $_.Exception.Message }
+            continue
+          }
         }
-    
+
         if ($result -and $result.success -eq $false) {
           $errorMessage = "$ip, $($result.message)"
           Write-Error $errorMessage
           $errorMessage | Out-File -Append $outputDir\ipqs_errors.txt -Encoding UTF8
           $lookupfailure++
+          $failures += [PSCustomObject]@{ Item = $ip; Reason = $result.message }
           continue
         }
         elseif ($result -and $result.ISP -eq "Private IP Address") {
@@ -257,9 +327,10 @@ function Get-clean_Ip {
           Write-Error $errorMessage
           $errorMessage | Out-File -Append $outputDir\ipqs_errors.txt -Encoding UTF8
           $lookupfailure++
+          $failures += [PSCustomObject]@{ Item = $ip; Reason = "Private IP Address" }
           continue
         }
-    
+
         $ipinfo = [PSCustomObject]@{
           "ip"            = $ip
           "fraud_score"   = $result.fraud_score
@@ -280,19 +351,23 @@ function Get-clean_Ip {
           "recent_abuse"  = $result.recent_abuse
           "bot_status"    = $result.bot_status
         }
-    
+
         $exportarray += $ipinfo
+      }
+      Write-Host "There were $lookupfailure lookup failures out of $($ips.Count)" -ForegroundColor Yellow
+      if ($failures.Count -gt 0) {
+        Write-Host "Failed lookups ($($failures.Count)):" -ForegroundColor Red
+        $failures | ForEach-Object { Write-Host "  $($_.Item): $($_.Reason)" -ForegroundColor Red }
       }
       $exportarray | Export-Csv -Path $outputDir\ipQSresults.csv -NoTypeInformation
       Write-Host "Results written to $outputdir\ipQSresults.csv" -ForegroundColor Green
-      Write-Host "There were $lookupfailure lookup failures out of $($ips.Count)" -ForegroundColor Yellow
       return $exportarray
     }
 
     function Get-Scamalytics_lookup {
       <#
-      
-      .Synopsis 
+
+      .Synopsis
         This script checks a list of IP addresses separated by a carriage return against the scamalytics threat intelligence service.
         You can check 5,000 per month for free.  See here: https://scamalytics.com/ip/api/pricing.
       .Description
@@ -307,13 +382,13 @@ function Get-clean_Ip {
         Path to the directory where the output file will be written. File name will be scamalytics.csv
       .Parameter ipListArray
         An array of IP addresses passed into the function.
-        
+
         .Parameter IPListPath
         path to a list of IP addresses separated by a carriage return.
-      
+
         .Parameter scamalyticsAPIKey
         API Key for scamalytics Get one here: https://scamalytics.com/
-      
+
         #>
         [CmdletBinding()]
       param (
@@ -324,34 +399,66 @@ function Get-clean_Ip {
           [array]$ipListArray,
           [string]$IPListPath
       )
-      
-      
+
+
       if($IPListPath) {$ips = Get-Content $IPListPath}
       if($ipListArray) {$ips = $ipListArray}
-      if(!$IPListPath -and !$ipListArray) {Write-Host "No IP list provided.  Exiting."; break}
+      if(!$IPListPath -and !$ipListArray) { throw "No IP list provided." }
+
+      # Filter out blank/malformed entries so one bad line doesn't derail the whole batch
+      $rawCount = @($ips).Count
+      $ips = Get-clean_Ip -iplist $ips
+      $skipped = $rawCount - $ips.Count
+      if ($skipped -gt 0) {
+        Write-Host "Skipped $skipped invalid/unparseable entr$(if ($skipped -eq 1) { 'y' } else { 'ies' }) from the input list" -ForegroundColor Yellow
+      }
+
       $scamalyticsurl ="https://api11.scamalytics.com/greycastlesecurity/?key=$scamalyticsAPIKey&test=0&ip="
       $exportarray = @()
       $lookupfailure = 0
+      $failures = @()
       Write-Host "Checking " $ips.count " IP addresses"
       foreach($ip in $ips){
         Write-Verbose "Checking $ip"
-      
+
         #use a try/catch block to catch errors
         try{
         $result = Invoke-RestMethod -Uri $scamalyticsurl+$ip
         }
         catch{
-          $errorMessage = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
-          Write-Error $errorMessage
-          $errorMessage | Out-File -Append $outputDir\scamalyticserrors.txt -Encoding UTF8
-          $lookupfailure++
-          continue
+          # Scamalytics rate-limits (HTTP 429); give it one retry before logging a failure
+          $statusCode = $null
+          try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {}
+          if ($statusCode -eq 429) {
+            Write-Host "Rate limited on $ip, waiting 5s and retrying once..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 5
+            try {
+              $result = Invoke-RestMethod -Uri $scamalyticsurl+$ip
+            }
+            catch {
+              $errorMessage = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
+              Write-Error $errorMessage
+              $errorMessage | Out-File -Append $outputDir\scamalyticserrors.txt -Encoding UTF8
+              $lookupfailure++
+              $failures += [PSCustomObject]@{ Item = $ip; Reason = "rate limited, retry failed: $($_.Exception.Message)" }
+              continue
+            }
+          }
+          else {
+            $errorMessage = "There was an error retrieving information for "+ "$ip $($_.Exception.Message)"
+            Write-Error $errorMessage
+            $errorMessage | Out-File -Append $outputDir\scamalyticserrors.txt -Encoding UTF8
+            $lookupfailure++
+            $failures += [PSCustomObject]@{ Item = $ip; Reason = $_.Exception.Message }
+            continue
+          }
         }
         if ($result.status -eq "error") {
           $errorMessage = "$ip, $($result.error)"
           Write-Error $errorMessage
           $errorMessage | Out-File -Append $outputDir\scamalyticserrors.txt -Encoding UTF8
           $lookupfailure++
+          $failures += [PSCustomObject]@{ Item = $ip; Reason = $result.error }
           continue
         }
         $arrayItems = [PSCustomObject]@{
@@ -363,13 +470,17 @@ function Get-clean_Ip {
       }
       Write-Host "There were $lookupfailure lookup errors out of " $ips.Count -ForegroundColor Green
       Write-Host "There are now" $exportarray.count "suspect IP addresses" -ForegroundColor Green
+      if ($failures.Count -gt 0) {
+        Write-Host "Failed lookups ($($failures.Count)):" -ForegroundColor Red
+        $failures | ForEach-Object { Write-Host "  $($_.Item): $($_.Reason)" -ForegroundColor Red }
+      }
       $exportarray | Export-Csv -Path $outputdir\scamalytics.csv -NoTypeInformation -Encoding UTF8
       Write-Host "Results written to $outputdir\scamalytics.csv" -ForegroundColor Green
       return $exportarray
-      
-      } 
-      
-      
+
+      }
+
+
 
 
 
