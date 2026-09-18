@@ -96,11 +96,21 @@
   Carriage-return separated list of IP addresses deemed to be bad.
 
 .PARAMETER fraudScoreThreshold
-    Specifies the fraud score threshold for IPQS.  Default is 75.  
+    Specifies the fraud score threshold for IPQS.  Default is 75.
     This is the threshold for considering an IP address to be malicious.
-    It's worth reading the IPQS documentation: 
+    It's worth reading the IPQS documentation:
     https://www.ipqualityscore.com/documentation/fraud-prevention-scoring
-  
+
+.PARAMETER SkipMicrosoftAllowlist
+    By default, IPs belonging to Microsoft's own first-party service ranges
+    (the "Office365" Azure service tag -- Exchange Online, SharePoint Online,
+    Skype for Business/Teams endpoints) are filtered out of the unique-IP list
+    before any threat-intel lookups or the gridview, since these are commonly
+    Microsoft's own backend infrastructure (mail transport hops, Defender Safe
+    Links/Safe Attachments scanning, Substrate, etc.) rather than a real client.
+    Specify this switch to disable that filtering and see every IP, unfiltered.
+    See Get-MicrosoftIPRanges (in Get-IPAddressInfo.psm1) for details and caveats.
+
   .Example
   C:\Scripts\PowIRShell\Get-M365CompromiseInfo.ps1 -searchdir C:\Scripts\PowIRShell\Test_data\M365Output\UnifiedAuditLog\20231012092146\ -outputDir C:\Temp\365Results -ipinfoLookup -ipinfoAPIKey <ipinfoAPIKey> -IPQSLookup -ipqsAPIKey "<IPQSAPIKey>" -ScamalyticsLookup -scamalyticsAPIKey "<ScamalyticsAPIKey>" -Verbose
 
@@ -109,9 +119,40 @@
    this: https://github.com/invictus-ir/Microsoft-Extractor-Suite
 
 .Outputs
-  CSV files containing evnts of interest from the forensic perspective: 
-  MaliciousActivities.csv, MaliciousLogons.csv,MaliciousMailItemsAccessed.csv, 
-  and MaliciousFileOps.csv.
+  CSV files containing evnts of interest from the forensic perspective:
+  MaliciousActivities.csv, MaliciousLogons.csv, MaliciousMailItemsAccessed.csv,
+  MaliciousFileOps.csv, and MailboxRuleActivity.csv.
+
+  MaliciousMailItemsAccessed.csv includes Subject and SizeInBytes columns when the
+  UAL record populates them (not guaranteed for every record/tenant/audit config).
+
+  MaliciousFileOps.csv includes a LikelyBenignReason column. A file operation
+  with Platform "Wac" (edited via Office Online in-browser) always shows
+  Office Online's own backend IP rather than the user's real IP, so these get
+  labeled with an explanation rather than silently dropped -- the row stays in
+  the CSV either way. A blank LikelyBenignReason means no known-benign pattern
+  matched.
+
+  MailboxRuleActivity.csv covers New-InboxRule, Set-InboxRule, Remove-InboxRule,
+  Enable-InboxRule, Disable-InboxRule, and UpdateInboxRules events -- a classic
+  post-compromise persistence/exfil technique (auto-forwarding, auto-deleting, or
+  hiding incoming mail). Unlike the other CSVs, this one is NOT filtered by IP
+  reputation: every mailbox rule change in the UAL is included, with a
+  FromFlaggedIP column noting whether the change also came from an IP in the
+  bad-IP list. A rule change from an IP your threat intel hasn't flagged is still
+  worth reviewing -- don't assume FromFlaggedIP = False means benign.
+
+  Unless -SkipMicrosoftAllowlist is specified, IPs matching Microsoft's own
+  Office365 service ranges are removed from the unique-IP list before any
+  threat-intel lookups or the gridview -- these are typically Microsoft's own
+  backend infrastructure, not a real client. Excluded IPs are written to
+  MicrosoftAllowlistedIPs.txt so nothing is silently dropped without a record.
+
+  At the end of the run, a "Detection Rule Parameters" summary -- which lookups ran,
+  the thresholds/criteria applied (e.g. IPQS fraud_score threshold, the Scamalytics
+  risk rule), the resulting bad-IP list, and the mailbox rule operations monitored --
+  is written to the console and appended as a comment-prefixed block at the bottom
+  of MaliciousActivities.csv, for reproducibility and reporting.
 
 #>
 [CmdletBinding()]
@@ -129,7 +170,8 @@ param (
     [string]$ipinfoAPIKey,
     [string]$ipqsAPIKey,
     [string]$scamalyticsAPIKey,
-    [int]$fraudScoreThreshold = 75
+    [int]$fraudScoreThreshold = 75,
+    [switch]$SkipMicrosoftAllowlist
 )
 $ErrorActionPreference = "Stop"
 function Confirm-apikeys{
@@ -190,6 +232,26 @@ $badip = @()
 if($badIPList){$badip = Get-Content $badIPList}
 $iplist =  Get-UniqueIPs -auditevents $Logevents # this is not necessary if a badiplist is provided
 
+if (-not $SkipMicrosoftAllowlist -and $iplist.Count -gt 0) {
+    $msftRanges = Get-MicrosoftIPRanges
+    if ($msftRanges.Count -gt 0) {
+        $msftAllowlistedIPs = @()
+        $filteredIplist = @()
+        foreach ($ip in $iplist) {
+            if (Test-IPInAnyCIDR -IPAddress $ip -CIDRRanges $msftRanges) {
+                $msftAllowlistedIPs += $ip
+            } else {
+                $filteredIplist += $ip
+            }
+        }
+        if ($msftAllowlistedIPs.Count -gt 0) {
+            $msftAllowlistedIPs | Out-File $outputDir\MicrosoftAllowlistedIPs.txt -Encoding ascii -Force
+            Write-Host "Excluded $($msftAllowlistedIPs.count) Microsoft-owned IP(s) from the lookup/gridview list -- see MicrosoftAllowlistedIPs.txt. Use -SkipMicrosoftAllowlist to disable this." -ForegroundColor Cyan
+        }
+        $iplist = $filteredIplist
+    }
+}
+
 
 
 #debugging to ensure that $iplist is an array containing IP addresses only.
@@ -210,19 +272,22 @@ $suspectip = @()
             - Id
             - Path
             - InternetMessageId
+            - Subject (when present -- not every tenant/audit config populates this on
+              every FolderItem, so treat a blank Subject as "unknown", not "no subject")
+            - SizeInBytes
     #>
         param (
             [Parameter(Mandatory=$true)]
             [object]$MailItemsAccessedEvent
         )
-    
+
         $result = @()
-    
+
         $operationProperties = @{}
         foreach ($property in $MailItemsAccessedEvent.OperationProperties) {
             $operationProperties[$property.Name] = $property.Value
         }
-    
+
         foreach ($folder in $MailItemsAccessedEvent.Folders) {
             foreach ($item in $folder.FolderItems) {
                 $result += New-Object PSObject -Property @{
@@ -231,12 +296,124 @@ $suspectip = @()
                     Path = $folder.Path
                     MailAccessType = $operationProperties['MailAccessType']
                     IsThrottled = $operationProperties['IsThrottled']
+                    Subject = $item.Subject
+                    SizeInBytes = $item.SizeInBytes
                 }
             }
         }
-    
+
         return $result
     }
+
+    function Get-MailboxRuleInfo {
+      <#
+    .SYNOPSIS
+        Extracts the cmdlet parameters (rule name, forwarding/redirect targets, delete/move
+        actions, etc.) from a mailbox-rule UAL event (New-InboxRule, Set-InboxRule, etc.).
+    .INPUTS
+        A UAL event whose Operation is a mailbox-rule cmdlet. The parameters passed to that
+        cmdlet are recorded in the event's "Parameters" property as an array of Name/Value pairs.
+    .OUTPUTS
+        A PSObject summarizing the rule's key properties, plus every parameter passed, joined
+        as a single string so nothing is missed even if Microsoft adds new parameters later.
+    #>
+        param (
+            [Parameter(Mandatory=$true)]
+            [object]$RuleEvent
+        )
+
+        $ruleParams = @{}
+        foreach ($param in $RuleEvent.Parameters) {
+            $ruleParams[$param.Name] = $param.Value
+        }
+
+        return [PSCustomObject]@{
+            RuleName                     = $ruleParams['Name']
+            ForwardTo                    = $ruleParams['ForwardTo']
+            ForwardAsAttachmentTo        = $ruleParams['ForwardAsAttachmentTo']
+            RedirectTo                   = $ruleParams['RedirectTo']
+            DeleteMessage                = $ruleParams['DeleteMessage']
+            MoveToFolder                 = $ruleParams['MoveToFolder']
+            MarkAsRead                   = $ruleParams['MarkAsRead']
+            StopProcessingRules          = $ruleParams['StopProcessingRules']
+            AlwaysDeleteOutlookRulesBlob = $ruleParams['AlwaysDeleteOutlookRulesBlob']
+            AllParameters                = (($RuleEvent.Parameters | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ')
+        }
+    }
+
+    function Get-EventIPAddress {
+      <#
+    .SYNOPSIS
+        Resolves the source IP address for a UAL event, regardless of which field
+        that record type happens to use.
+    .DESCRIPTION
+        Different UAL record types put the client/actor IP in different fields.
+        Mail, file, and login-type events generally populate ClientIPAddress and/or
+        ActorIPAddress, while admin/cmdlet-type records (e.g. New-InboxRule) instead
+        use ClientIP, often as "1.2.3.4:port". Rather than repeating this fallback
+        chain at every call site (which is what led to the New-InboxRule detection
+        bug), this function centralizes it: it checks ClientIPAddress, then
+        ActorIPAddress, then ClientIP, in that order, and returns the first one that
+        Get-IPAddress can actually parse an IP out of.
+    .INPUTS
+        A single UAL event object (from Get-AuditdataFrom365JSON).
+    .OUTPUTS
+        The event's IP address as a string, or $null if none of the known fields
+        contained a parseable IP.
+    .EXAMPLE
+        Get-EventIPAddress -UalEvent $evt
+    #>
+        param (
+            [Parameter(Mandatory=$true)]
+            [object]$UalEvent
+        )
+        $ip = Get-IPAddress -ipField $UalEvent.ClientIPAddress
+        if ($ip) { return $ip }
+        $ip = Get-IPAddress -ipField $UalEvent.ActorIPAddress
+        if ($ip) { return $ip }
+        $ip = Get-IPAddress -ipField $UalEvent.ClientIP
+        if ($ip) { return $ip }
+        return $null
+    }
+
+    function Get-LikelyBenignReason {
+      <#
+    .SYNOPSIS
+        Flags UAL events that match a known, well-documented benign pattern,
+        even though they came from a flagged IP.
+    .DESCRIPTION
+        The row this is attached to still ends up in the CSV -- nothing is
+        hidden or removed -- this just adds a short explanation so you don't
+        have to re-derive "oh, that's just WAC" every time it comes up.
+
+        Currently recognizes one pattern: a file operation with Platform "Wac"
+        (Office Online Server -- the doc was edited in-browser rather than
+        with a desktop client). SharePoint/OneDrive records WAC's own backend
+        IP as the "client" for these, not the end user's real IP, so the IP on
+        this record doesn't tell you who was actually behind the browser. That
+        distinction matters even though it's likely benign: a compromised
+        account editing a file this way produces an identical-looking record,
+        so this only ever adds a label -- it never changes FromFlaggedIP-style
+        detection or removes the row. Check the account's sign-in events for
+        the actual source if that matters for your investigation.
+    .INPUTS
+        A single UAL event object.
+    .OUTPUTS
+        A short explanation string if a known-benign pattern matched,
+        otherwise $null.
+    .EXAMPLE
+        Get-LikelyBenignReason -UalEvent $evt
+    #>
+        param (
+            [Parameter(Mandatory=$true)]
+            [object]$UalEvent
+        )
+        if ($UalEvent.Platform -eq 'Wac') {
+            return "Office Online (WAC) backend IP -- not the user's real client IP. Check sign-in events for this user/time instead."
+        }
+        return $null
+    }
+
 function Get-M365CompromiseResults {
     param (
         [array]$Logevents
@@ -245,15 +422,45 @@ function Get-M365CompromiseResults {
     )
     $loginevents = @("UserLoggedIn", "UserLoginFailed")
     $fileEvents = @("FileAccessed","FileAccessedExtended","FileCheckedIn","FileCheckedOut","FileCopied","FileDownloaded","FileModified","FileModifiedExtended","FileMoved","FilePreviewed","FileRecycled","FileRenamed","FileSyncDownloadedFull","FileSyncUploadedFull","FileUploaded")
+    # Mailbox rule cmdlets -- classic post-compromise persistence/exfil technique (auto-forward,
+    # auto-delete, or hide incoming mail). Checked below on EVERY event, not just ones from IPs
+    # already flagged malicious: a rule change is itself a strong indicator of compromise, and
+    # gating it behind IP reputation would miss rules created from an IP your threat intel
+    # lookups haven't (yet) flagged.
+    $mailboxRuleOperations = @("New-InboxRule","Set-InboxRule","Remove-InboxRule","Enable-InboxRule","Disable-InboxRule","UpdateInboxRules")
     $maliciousFileops=@()
     $maliciousLogins=@()
     $maliciousMailItemsAccessed=@()
+    $mailboxRuleActivity=@()
     [array]$maliciousActivities=@()
     Write-Host "Starting to check logs for malicious activity..." -ForegroundColor Green
 
 
     Foreach($evt in $Logevents){
-        if((Get-IPAddress -ipField $evt.ClientIPAddress) -in $badip -or (Get-IPAddress -ipField $evt.ActorIPAddress) -in $badip){
+        if($evt.Operation -in $mailboxRuleOperations){
+            $ruleInfo = Get-MailboxRuleInfo -RuleEvent $evt
+            $ipInBadList = (Get-EventIPAddress -UalEvent $evt) -in $badip
+            $arrayitems = [PSCustomObject]@{
+                'CreationTime'          = $evt.CreationTime
+                'UserId'                = $evt.UserId
+                'ClientIP'              = $evt.ClientIP
+                'Operation'             = $evt.Operation
+                'MailboxOwnerUPN'       = $evt.MailboxOwnerUPN
+                'FromFlaggedIP'         = $ipInBadList
+                'RuleName'              = $ruleInfo.RuleName
+                'ForwardTo'             = $ruleInfo.ForwardTo
+                'ForwardAsAttachmentTo' = $ruleInfo.ForwardAsAttachmentTo
+                'RedirectTo'            = $ruleInfo.RedirectTo
+                'DeleteMessage'         = $ruleInfo.DeleteMessage
+                'MoveToFolder'          = $ruleInfo.MoveToFolder
+                'MarkAsRead'            = $ruleInfo.MarkAsRead
+                'StopProcessingRules'   = $ruleInfo.StopProcessingRules
+                'AllParameters'         = $ruleInfo.AllParameters
+            }
+            $mailboxRuleActivity += $arrayitems
+            Write-Host "Mailbox rule activity detected: $($evt.Operation) '$($ruleInfo.RuleName)' by $($evt.UserId)" -ForegroundColor Magenta
+        }
+        if((Get-EventIPAddress -UalEvent $evt) -in $badip){
             #Write-Host "Debug: IP IN BADIP: $($evt.ClientIPAddress)" -ForegroundColor Yellow
             $applicationName = Get-M365ApplicationNameFromAppID  -applicationID $evt.ApplicationId
             if($evt.Operation -in $loginevents ){
@@ -305,6 +512,7 @@ function Get-M365CompromiseResults {
                     'SourceFileName' = $evt.SourceFileName
                     'DeviceDisplayName' = $evt.DeviceDisplayName
                     'UserAgent' = $userAgent
+                    'LikelyBenignReason' = Get-LikelyBenignReason -UalEvent $evt
                 }
                 $maliciousFileops += $arrayitems
                 Write-Verbose "Added object to maliciousFileops array: $arrayitems"
@@ -327,6 +535,8 @@ function Get-M365CompromiseResults {
                         'MailAccessType' = $item.MailAccessType
                         'IsThrottled' = $item.IsThrottled
                         'InternetMessageId' = $item.InternetMessageId
+                        'Subject' = $item.Subject
+                        'SizeInBytes' = $item.SizeInBytes
                         'Id' = $item.Id
                         'Path' = $item.Path
                     }
@@ -364,15 +574,30 @@ function Get-M365CompromiseResults {
     #$maliciousActivities | Export-Csv $outputDir\MaliciousActivities.csv -NoTypeInformation -Encoding UTF8 -Force
     Write-Host "Count of malicious logins: $($maliciousLogins.count)"
     Write-Host "Count of malicious fileops: $($maliciousFileops.count)"
+    $likelyBenignFileopsCount = ($maliciousFileops | Where-Object { $_.LikelyBenignReason }).Count
+    if ($likelyBenignFileopsCount -gt 0) {
+        Write-Host "  -> $likelyBenignFileopsCount flagged as likely-benign -- see LikelyBenignReason column in MaliciousFileOps.csv" -ForegroundColor DarkYellow
+    }
     Write-Host "Count of malicious activities: $($maliciousActivities.count)"
     Write-Host "Count of malicious mail items accessed: $($maliciousMailItemsAccessed.count)"
+    Write-Host "Count of mailbox rule changes detected: $($mailboxRuleActivity.count)"
     try {
         if ($maliciouslogins.count -gt 0){
             $maliciousLogins | Export-Csv $outputDir\MaliciousLogons.csv -NoTypeInformation -Encoding UTF8 -Force
-        } 
+        }
     }
     catch{
         Write-Host "Could not export malicious logins to CSV file" -ForegroundColor Red
+        Write-Host $error[0].Exception -ForegroundColor Red
+    }
+    try {
+        if ($mailboxRuleActivity.count -gt 0){
+            $mailboxRuleActivity | Export-Csv $outputDir\MailboxRuleActivity.csv -NoTypeInformation -Encoding UTF8 -Force
+            Write-Host "Wrote mailbox rule activity to $outputDir\MailboxRuleActivity.csv -- review this even if FromFlaggedIP is False." -ForegroundColor Magenta
+        }
+    }
+    catch{
+        Write-Host "Could not export mailbox rule activity to CSV file" -ForegroundColor Red
         Write-Host $error[0].Exception -ForegroundColor Red
     }
     try {
@@ -403,6 +628,61 @@ function Get-M365CompromiseResults {
         Write-Host $error[0].Exception -ForegroundColor Red
     }
 
+    # --- Detection rule / parameter summary ---------------------------------
+    # Documents exactly what criteria were used to flag IPs and events as
+    # malicious in this run -- which lookups ran, the thresholds applied, and
+    # the resulting bad-IP list -- for reproducibility and reporting.
+    $ruleSummary = [ordered]@{
+        'Run Timestamp'              = (Get-Date -Format 'u')
+        'Search Directory'           = $searchdir
+        'Output Directory'           = $outputDir
+        'Total UAL Events Processed' = $Logevents.Count
+        'ipinfoLookup Used'          = [bool]$ipinfoLookup
+        'IPQSLookup Used'            = [bool]$IPQSLookup
+        'ScamalyticsLookup Used'     = [bool]$ScamalyticsLookup
+        'allLookups Used'            = [bool]$allLookups
+        'BadIPList File Provided'    = [bool]$badIPList
+        'BadIPList Path'             = $(if ($badIPList) { $badIPList } else { 'N/A' })
+        'IPQS Fraud Score Threshold' = $(if ($IPQSLookup -or $allLookups) { $fraudScoreThreshold } else { 'N/A (IPQS not used)' })
+        'IPQS Rule'                  = $(if ($IPQSLookup -or $allLookups) { "IP flagged malicious if fraud_score -ge $fraudScoreThreshold" } else { 'N/A (IPQS not used)' })
+        'Scamalytics Rule'           = $(if ($ScamalyticsLookup -or $allLookups) { "IP flagged malicious if risk -ne 'low'" } else { 'N/A (Scamalytics not used)' })
+        'Malicious IP Count'         = $badip.Count
+        'Malicious IPs'              = ($badip -join '; ')
+        'Malicious Logins Found'     = $maliciousLogins.Count
+        'Malicious File Ops Found'   = $maliciousFileops.Count
+        'Likely-Benign File Ops'     = ($maliciousFileops | Where-Object { $_.LikelyBenignReason }).Count
+        'Malicious Mail Items Found' = $maliciousMailItemsAccessed.Count
+        'Malicious Other Activities' = $maliciousActivities.Count
+        'Mailbox Rule Operations Monitored' = ($mailboxRuleOperations -join ', ')
+        'Mailbox Rule Changes Found' = $mailboxRuleActivity.Count
+        'Mailbox Rule Rule'          = 'Every New/Set/Remove/Enable/Disable-InboxRule and UpdateInboxRules event is flagged, regardless of source IP reputation'
+    }
+
+    Write-Host ""
+    Write-Host "===== Detection Rule Parameters =====" -ForegroundColor Cyan
+    foreach ($key in $ruleSummary.Keys) {
+        Write-Host ("  {0,-28}: {1}" -f $key, $ruleSummary[$key]) -ForegroundColor Yellow
+    }
+    Write-Host "======================================" -ForegroundColor Cyan
+
+    # Also append the same summary to MaliciousActivities.csv, as a clearly
+    # delimited, comment-prefixed block below the event rows. It's kept as
+    # plain lines rather than extra CSV columns, since mixing per-event data
+    # with run-level metadata in the same columns would be misleading -- most
+    # CSV readers (Excel included) will just show these as trailing text rows.
+    try {
+        $csvPath = Join-Path $outputDir 'MaliciousActivities.csv'
+        Add-Content -Path $csvPath -Value ""
+        Add-Content -Path $csvPath -Value "# ===== Detection Rule Parameters ====="
+        foreach ($key in $ruleSummary.Keys) {
+            Add-Content -Path $csvPath -Value "# ${key}: $($ruleSummary[$key])"
+        }
+        Add-Content -Path $csvPath -Value "# ======================================"
+    }
+    catch {
+        Write-Host "Could not append rule summary to MaliciousActivities.csv" -ForegroundColor Red
+        Write-Host $error[0].Exception -ForegroundColor Red
+    }
 
 } #end function Get-M365CompromiseResults
 
@@ -434,8 +714,7 @@ if($allLookups){
             $suspectip = (Get-Scamalytics_lookup -scamalyticsAPIKey $scamalyticsAPIKey -ipListArray $suspectip -outputDir $outputDir | Where-Object risk -ne "low").IP
             $suspectip | Out-File $outputDir\scamalyticssuspects.txt
             Write-Host 'Performing IPQS lookup'
-            #TODO edit line below to use a variable for the fraud score threshold
-            $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score -ge 40).IP
+            $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score -ge $fraudScoreThreshold).IP
             $suspectip | Out-File $outputDir\ipqssuspects.txt
             $badip = $suspectip
             Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir
@@ -448,7 +727,7 @@ elseif ($badIPList) {
 elseif ($ipinfoLookup -and $IPQSLookup -and !$ScamalyticsLookup) {
     Write-Host 'Performing IPinfo and IPQS lookups...'
     $suspectip = (Get-IPInfoLookup -ipListArray $iplist -ipinfoAPIKey $ipinfoAPIKey -outputDir $outputDir | Out-GridView -PassThru -Title "Select suspicious IPs").IP 
-    $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score $fraudScoreThreshold).IP
+    $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score -ge $fraudScoreThreshold).IP
     $badip = $suspectip
     Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir
 }
@@ -469,7 +748,7 @@ elseif ($ipinfoLookup -and !$ScamalyticsLookup -and !$IPQSLookup) {
 elseif ($IPQSLookup -and $ScamalyticsLookup -and !$ipinfoLookup) {
     Write-Host 'Performing Scamalytics and IPQS lookups...'
     $suspectip = (Get-Scamalytics_lookup -scamalyticsAPIKey $scamalyticsAPIKey -ipListArray $suspectip -outputDir $outputDir | Where-Object risk -ne "low").IP
-    $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score $fraudScoreThreshold).IP
+    $suspectip = (Get-IPQSLookup -ipListArray $suspectip -ipqsAPIKey $ipqsAPIKey -outputDir $outputDir | Where-Object fraud_score -ge $fraudScoreThreshold).IP
     Write-Host 'Done performing Scamalytics and IPQS Lookup!' -ForegroundColor Green
     $badip = $suspectip
     Get-M365CompromiseResults -Logevents $Logevents -badip $badip -outputDir $outputDir
