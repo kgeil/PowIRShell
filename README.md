@@ -3,20 +3,21 @@ PowerShell scripts useful for incident response and Active Directory auditing.
 
 This is a collection of Powershell scripts which are useful for information security tasks. Currently the
 main script Get-M365CompromiseInfo.  It takes Microsoft365 Unified Audit Log (UAL) files in JSON
-format and looks up IP addresses using either IPInfo.io, Scamalytics, IPQualityScore, or all three.
+format and looks up IP addresses using either IPInfo.io, Scamalytics, IPQualityScore, or all three. API Keys for these services are required.
 
 ## Quick start:
 ```
 git clone https://github.com/kgeil/PowIRShell.git
+cd PowIRShell
 Import-Module .\M365CompromiseInfo.psd1
-Install-module -Name ExchangeOnlineManagement
+Install-module -Name ExchangeOnlineManagement # Must run PowerShell as admin, installs prerequisite. Hit Y then enter, then hit A then enter
 Connect-ExchangeOnline -UserPrincipalName analyst@contoso.com
 Get-M365UnifiedAuditLog -StartDate '09/14/2026' -EndDate '09/18/2026' -OutputDir C:\temp\365Comp\UAL
 Get-M365CompromiseInfo -searchdir C:\temp\365Comp\UAL -outputDir C:\temp\365Comp\ -ipinfoLookup -ipinfoAPIKey '<IpInfoKeyHere>' -ScamalyticsLookup -scamalyticsAPIKey '<ScamalyticsKeyHere>'
 ```
 The script will then start doing its work.  A gridview will appear, offering you the option of selecting IP addresses based on ASN, geo-ip lookup, etc.  If you pay for an IPQS license, this may not be necessary.  The grid allows you to weed out IP addresses to save time and money on threat intel lookups.
 
-### Getting UAL data straight from your tenant (no Invictus Extractor needed):
+### Getting UAL data straight from your tenant:
 If you don't already have UAL JSON exports on disk, `Get-M365UnifiedAuditLog` will pull them directly from Microsoft 365 and write them into the format `Get-M365CompromiseInfo` expects.
 ```
 Connect-ExchangeOnline -UserPrincipalName analyst@contoso.com
