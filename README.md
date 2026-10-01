@@ -7,7 +7,7 @@ format and looks up IP addresses using either IPInfo.io, Scamalytics, IPQualityS
 
 ## Quick start:
 ```
-git clone https://github.com/kgeil/PowIRShell.git
+git clone https://github.com/PlacidSecurity/PowIRShell.git
 cd PowIRShell
 Import-Module .\M365CompromiseInfo.psd1
 Install-module -Name ExchangeOnlineManagement # Must run PowerShell as admin, installs prerequisite. Hit Y then enter, then hit A then enter
